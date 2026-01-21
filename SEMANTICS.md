@@ -2,7 +2,7 @@
 
 This document defines the normative behavior of ActionGate. Any implementation claiming compatibility must conform to these semantics.
 
-Version: 1.0
+Version: 0.1
 
 ---
 
@@ -168,4 +168,4 @@ When this specification and the reference implementation conflict, **this specif
 
 ## Changelog
 
-- **1.0** (2025-01): Initial specification
+- **0.1** (2025-01): Initial specification

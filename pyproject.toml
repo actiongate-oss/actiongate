@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "actiongate"
-version = "1.0.0"
+version = "0.1.0"
 description = "Rate limiting for AI agents. No tokens, no latency, just rules."
 readme = "README.md"
 license = "MIT"

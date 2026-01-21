@@ -10,7 +10,7 @@ readme = "README.md"
 license = "MIT"
 requires-python = ">=3.12"
 authors = [
-    { name = "Your Name", email = "you@example.com" }
+    { name = "ActionGate OSS", email = "actiongate-oss@users.noreply.github.com" }
 ]
 keywords = [
     "rate-limiting",

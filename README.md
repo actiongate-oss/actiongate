@@ -1,6 +1,6 @@
 # ActionGate
 
-Rate limiting for AI agents. No tokens, no latency, just rules.
+Deterministic, pre-execution gating for semantic actions (e.g. tool calls) in agent systems.
 
 ## Source of Truth
 

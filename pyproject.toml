@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "actiongate"
 version = "0.1.0"
-description = "Rate limiting for AI agents. No tokens, no latency, just rules."
+description = "Deterministic, pre-execution gating for semantic actions (e.g. tool calls) in agent systems."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.12"
@@ -39,9 +39,9 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/yourname/actiongate"
-Documentation = "https://github.com/yourname/actiongate#readme"
-Repository = "https://github.com/yourname/actiongate"
+Homepage = "https://github.com/actiongate-oss/actiongate"
+Documentation = "https://github.com/actiongate-oss/actiongate#readme"
+Repository = "https://github.com/actiongate-oss/actiongate"
 
 [tool.hatch.build.targets.wheel]
 packages = ["actiongate"]

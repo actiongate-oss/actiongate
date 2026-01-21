@@ -1,6 +1,6 @@
-"""ActionGate: Rate limiting for AI agents. No tokens, no latency, just rules.
+"""ActionGate: Deterministic, pre-execution gating for semantic actions (e.g. tool calls) in agent systems.
 
-Simple rate limiting and cooldown enforcement for agent actions.
+Reference implementation with policy enforcement, cooldowns, and distributed support.
 
 Example:
     from actiongate import Engine, Gate, Policy, Mode

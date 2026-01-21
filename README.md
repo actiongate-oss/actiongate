@@ -4,7 +4,7 @@ Rate limiting for AI agents. No tokens, no latency, just rules.
 
 ## Source of Truth
 
-The canonical source is [github.com/yourname/actiongate](https://github.com/yourname/actiongate). PyPI distribution is a convenience mirror—verify against the repo if provenance matters to you.
+The canonical source is [github.com/actiongate-oss/actiongate](https://github.com/actiongate-oss/actiongate). PyPI distribution is a convenience mirror—verify against the repo if provenance matters to you.
 
 ## Install
 
@@ -159,7 +159,7 @@ Results from local benchmark on Apple M1, Python 3.12. Run to reproduce on your 
 
 ## Support
 
-This project is published as-is under the MIT license. No support, SLA, or maintenance is guaranteed. If you need a support contract, open an issue to discuss.
+This project is published as-is under the MIT license. No support, SLA, or maintenance is guaranteed.
 
 ## License
 

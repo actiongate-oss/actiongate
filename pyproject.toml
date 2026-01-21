@@ -47,7 +47,7 @@ Repository = "https://github.com/actiongate-oss/actiongate"
 packages = ["actiongate"]
 
 [tool.pytest.ini_options]
-testpaths = ["actiongate"]
+testpaths = ["tests"]
 python_files = ["test_*.py"]
 
 [tool.mypy]

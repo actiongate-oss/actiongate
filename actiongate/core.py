@@ -105,22 +105,49 @@ class Decision:
         return self.allowed
 
 
+class _Missing:
+    """Sentinel for distinguishing None from missing value."""
+    __slots__ = ()
+    def __repr__(self) -> str:
+        return "<MISSING>"
+
+MISSING = _Missing()
+
+
 @dataclass(frozen=True, slots=True)
 class Result[T]:
-    """Wrapper for guarded function results."""
+    """Wrapper for guarded function results.
+
+    Uses a sentinel to distinguish between:
+    - Function returned None (legitimate value)
+    - Function was blocked (no value)
+    """
     decision: Decision
-    value: T | None = None
+    _value: T | _Missing = MISSING
 
     @property
     def ok(self) -> bool:
         return self.decision.allowed
 
+    @property
+    def has_value(self) -> bool:
+        return not isinstance(self._value, _Missing)
+
+    @property
+    def value(self) -> T | None:
+        """Get value or None if blocked/missing."""
+        if isinstance(self._value, _Missing):
+            return None
+        return self._value
+
     def unwrap(self) -> T:
         """Get value or raise if blocked."""
-        if self.value is None:
+        if isinstance(self._value, _Missing):
             raise ValueError(f"No value: {self.decision.message or 'blocked'}")
-        return self.value
+        return self._value
 
     def unwrap_or(self, default: T) -> T:
         """Get value or return default if blocked."""
-        return self.value if self.value is not None else default
+        if isinstance(self._value, _Missing):
+            return default
+        return self._value

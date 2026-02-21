@@ -28,7 +28,7 @@ Gate = (namespace: string, action: string, principal: string)
 | `action` | Operation name | `"refund"`, `"search"`, `"send_email"` |
 | `principal` | Scope of enforcement | `"user:123"`, `"agent:42"`, `"global"` |
 
-Two gates are equal iff all three fields are equal. Enforcement state is **not shared** across distinct gates.
+Two gates are equal if and only if all three fields are equal. Enforcement state is **not shared** across distinct gates.
 
 ---
 
@@ -131,7 +131,7 @@ ActionGate is a **stateless-per-request, stateful-per-gate** primitive. It exami
 
 ## 9. Compatibility
 
-An implementation is **ActionGate-compatible** iff:
+An implementation is **ActionGate-compatible** if and only if:
 
 1. It implements the Gate identity model (§2)
 2. It implements the Policy parameters (§3)
@@ -159,7 +159,7 @@ Compatible implementations must not:
 The canonical reference implementation is at:
 
 ```
-https://github.com/yourname/actiongate
+https://github.com/actiongate-oss/actiongate
 ```
 
 When this specification and the reference implementation conflict, **this specification governs**.
@@ -168,4 +168,4 @@ When this specification and the reference implementation conflict, **this specif
 
 ## Changelog
 
-- **0.1** (2025-01): Initial specification
+- **0.1** (2026-01): Initial specification

@@ -28,6 +28,7 @@ Example:
 from .engine import Blocked, Engine
 from .store import MemoryStore, RedisStore, Store
 from .core import (
+    MISSING,
     BlockReason,
     Decision,
     Gate,
@@ -50,6 +51,7 @@ __all__ = [
     "Status",
     "BlockReason",
     "Decision",
+    "MISSING",
     "Result",
     # Storage
     "Store",
@@ -57,4 +59,4 @@ __all__ = [
     "RedisStore",
 ]
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"

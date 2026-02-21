@@ -211,10 +211,10 @@ class Engine:
                 decision = self.check(gate)
 
                 if decision.blocked:
-                    return Result(decision=decision, value=None)
+                    return Result(decision=decision)
 
                 value = fn(*args, **kwargs)
-                return Result(decision=decision, value=value)
+                return Result(decision=decision, _value=value)
 
             return wrapper
         return decorator

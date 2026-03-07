@@ -36,6 +36,7 @@ from .core import (
     Status,
     StoreErrorMode,
 )
+from .emitter import Emitter
 from .engine import Blocked, Engine
 from .store import MemoryStore, RedisStore, Store
 
@@ -54,10 +55,11 @@ __all__ = [
     # Engine
     "Engine",
     "Blocked",
+    "Emitter",
     # Storage
     "Store",
     "MemoryStore",
     "RedisStore",
 ]
 
-__version__ = "0.2.0"
+__version__ = "0.2.2"

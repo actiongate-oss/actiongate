@@ -6,6 +6,7 @@ import time
 from functools import wraps
 from typing import Callable, ParamSpec, TypeVar, overload
 
+from .emitter import Emitter
 from .store import MemoryStore, Store
 from .core import (
     BlockReason,
@@ -53,18 +54,18 @@ class Engine:
             print(f"Blocked: {result.decision.message}")
     """
 
-    __slots__ = ("_store", "_clock", "_policies", "_listeners", "_errors")
+    __slots__ = ("_store", "_clock", "_policies", "_emitter")
 
     def __init__(
         self,
         store: Store | None = None,
         clock: Callable[[], float] | None = None,
+        emitter: Emitter | None = None,
     ) -> None:
         self._store = store or MemoryStore()
         self._clock = clock or time.monotonic
         self._policies: dict[Gate, Policy] = {}
-        self._listeners: list[Callable[[Decision], None]] = []
-        self._errors = 0
+        self._emitter = emitter or Emitter()
 
     # ─────────────────────────────────────────────────────────────
     # Configuration
@@ -80,12 +81,12 @@ class Engine:
 
     def on_decision(self, listener: Callable[[Decision], None]) -> None:
         """Add a listener for decisions (for logging/metrics)."""
-        self._listeners.append(listener)
+        self._emitter.add(listener)
 
     @property
     def listener_errors(self) -> int:
         """Count of listener exceptions (never block execution)."""
-        return self._errors
+        return self._emitter.error_count
 
     # ─────────────────────────────────────────────────────────────
     # Core API
@@ -243,12 +244,5 @@ class Engine:
             calls_in_window=calls_in_window,
             time_since_last=time_since_last,
         )
-        self._emit(decision)
+        self._emitter.emit(decision)
         return decision
-
-    def _emit(self, decision: Decision) -> None:
-        for listener in self._listeners:
-            try:
-                listener(decision)
-            except Exception:
-                self._errors += 1

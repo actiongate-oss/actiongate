@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://actiongate.dev/schemas/actiongate-decision-0.2.2.json",
+  "title": "ActionGate Decision",
+  "description": "Serialized output of actiongate.Decision.to_dict(). Rate-limit evaluation result.",
+  "type": "object",
+  "required": ["schema_version", "status", "gate", "reason", "message", "calls_in_window", "time_since_last"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "0.2.2",
+      "description": "Schema version. Consumers must check this before parsing."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["ALLOW", "BLOCK"],
+      "description": "Gate verdict."
+    },
+    "gate": {
+      "type": "string",
+      "pattern": "^[^:]+:[^@]+@.+$",
+      "description": "Gate identity as namespace:action@principal."
+    },
+    "reason": {
+      "type": ["string", "null"],
+      "enum": ["RATE_LIMIT", "COOLDOWN", "STORE_ERROR", null],
+      "description": "Block reason. Null when status is ALLOW."
+    },
+    "message": {
+      "type": ["string", "null"],
+      "description": "Human-readable explanation. Null when status is ALLOW."
+    },
+    "calls_in_window": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of calls recorded in the current window."
+    },
+    "time_since_last": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "description": "Seconds since last call. Null if no prior calls."
+    }
+  }
+}

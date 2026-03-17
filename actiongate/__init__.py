@@ -1,4 +1,6 @@
-"""ActionGate: Deterministic, pre-execution gating for semantic actions (e.g. tool calls) in agent systems.
+"""ActionGate: Deterministic, pre-execution gating for agent actions.
+
+Provides pre-execution enforcement for semantic actions (e.g. tool calls) in agent systems.
 
 Reference implementation with policy enforcement, cooldowns, and distributed support.
 
@@ -38,7 +40,7 @@ from .core import (
 )
 from .emitter import Emitter
 from .engine import Blocked, Engine
-from .store import MemoryStore, RedisStore, Store
+from .store import AsyncMemoryStore, AsyncStore, MemoryStore, RedisStore, Store
 
 __all__ = [
     # Core types
@@ -58,8 +60,10 @@ __all__ = [
     "Emitter",
     # Storage
     "Store",
+    "AsyncStore",
     "MemoryStore",
+    "AsyncMemoryStore",
     "RedisStore",
 ]
 
-__version__ = "0.2.2"
+__version__ = "0.3.0"

@@ -6,10 +6,10 @@ Measures p50/p95/p99 latencies for MemoryStore and RedisStore.
 Usage:
     # As module (recommended)
     python -m actiongate.bench
-    
+
     # Include Redis benchmarks
     python -m actiongate.bench --redis localhost:6379
-    
+
     # Custom iterations
     python -m actiongate.bench -n 50000
 """
@@ -18,14 +18,14 @@ from __future__ import annotations
 
 import argparse
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
 # Use relative imports when run as module, absolute when run directly
 try:
-    from . import Engine, Gate, Policy, MemoryStore
+    from . import Engine, Gate, MemoryStore, Policy
 except ImportError:
-    from actiongate import Engine, Gate, Policy, MemoryStore
+    from actiongate import Engine, Gate, MemoryStore, Policy
 
 
 @dataclass
@@ -66,24 +66,24 @@ def benchmark(
     warmup: int = 1000,
 ) -> BenchResult:
     """Run benchmark and collect timing statistics."""
-    
+
     # Warmup
     for _ in range(warmup):
         fn()
-    
+
     # Benchmark
     latencies: list[float] = []
     start = time.perf_counter()
-    
+
     for _ in range(iterations):
         t0 = time.perf_counter()
         fn()
         t1 = time.perf_counter()
         latencies.append((t1 - t0) * 1_000_000)  # Convert to microseconds
-    
+
     total = time.perf_counter() - start
     latencies.sort()
-    
+
     return BenchResult(
         name=name,
         iterations=iterations,
@@ -100,10 +100,10 @@ def bench_memory_store(iterations: int) -> BenchResult:
     engine = Engine(store=MemoryStore())
     gate = Gate("bench", "action", "user:test")
     policy = Policy(max_calls=1_000_000, window=3600)  # High limit to avoid blocking
-    
-    def op():
+
+    def op() -> None:
         engine.check(gate, policy)
-    
+
     return benchmark("MemoryStore", op, iterations)
 
 
@@ -112,56 +112,56 @@ def bench_memory_store_many_gates(iterations: int) -> BenchResult:
     engine = Engine(store=MemoryStore())
     policy = Policy(max_calls=1_000_000, window=3600)
     counter = [0]
-    
-    def op():
+
+    def op() -> None:
         gate = Gate("bench", "action", f"user:{counter[0] % 100}")
         counter[0] += 1
         engine.check(gate, policy)
-    
+
     return benchmark("MemoryStore (100 gates)", op, iterations)
 
 
 def bench_redis_store(host: str, port: int, iterations: int) -> BenchResult | None:
     """Benchmark Redis store."""
     try:
-        import redis
+        import redis  # type: ignore[import-not-found]
     except ImportError:
         print("  ⚠ redis-py not installed, skipping Redis benchmarks")
         print("    Install with: pip install actiongate[redis]")
         return None
-    
+
     try:
         from . import RedisStore
     except ImportError:
         from actiongate import RedisStore
-    
+
     try:
         client = redis.Redis(host=host, port=port, decode_responses=True)
         client.ping()
     except redis.ConnectionError:
         print(f"  ⚠ Cannot connect to Redis at {host}:{port}, skipping")
         return None
-    
+
     store = RedisStore(client, prefix="bench")
     engine = Engine(store=store)
     gate = Gate("bench", "action", "user:test")
     policy = Policy(max_calls=1_000_000, window=3600)
-    
+
     # Cleanup before benchmark
     store.clear(gate)
-    
-    def op():
+
+    def op() -> None:
         engine.check(gate, policy)
-    
+
     result = benchmark("RedisStore", op, iterations)
-    
+
     # Cleanup after benchmark
     store.clear(gate)
-    
+
     return result
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="ActionGate benchmarks")
     parser.add_argument(
         "--iterations", "-n",
@@ -180,28 +180,28 @@ def main():
     print("=" * 60)
     print("ActionGate Benchmarks")
     print("=" * 60)
-    
+
     # Memory benchmarks
     print("\n📊 MemoryStore Benchmarks\n")
-    
+
     result = bench_memory_store(args.iterations)
     print(result)
     print()
-    
+
     result = bench_memory_store_many_gates(args.iterations)
     print(result)
-    
+
     # Redis benchmarks
     if args.redis:
         print("\n📊 RedisStore Benchmarks\n")
-        
-        host, port = args.redis.split(":")
-        result = bench_redis_store(host, int(port), min(args.iterations, 5000))
-        if result:
-            print(result)
+
+        host, port_str = args.redis.split(":")
+        redis_result = bench_redis_store(host, int(port_str), min(args.iterations, 5000))
+        if redis_result:
+            print(redis_result)
     else:
         print("\n💡 Run with --redis localhost:6379 to include Redis benchmarks")
-    
+
     print("\n" + "=" * 60)
 
 

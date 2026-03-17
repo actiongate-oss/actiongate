@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable, Coroutine
 from functools import wraps
-from typing import Callable, ParamSpec, TypeVar, overload
+from typing import ParamSpec, TypeVar
 
-from .emitter import Emitter
-from .store import MemoryStore, Store
 from .core import (
     BlockReason,
     Decision,
@@ -18,12 +17,14 @@ from .core import (
     Status,
     StoreErrorMode,
 )
+from .emitter import Emitter
+from .store import AsyncMemoryStore, AsyncStore, MemoryStore, Store
 
 P = ParamSpec("P")
 T = TypeVar("T")
 
 
-class Blocked(RuntimeError):
+class Blocked(RuntimeError):  # noqa: N818 — public API name, cannot rename
     """Raised when action is blocked in HARD mode."""
 
     def __init__(self, decision: Decision) -> None:
@@ -33,20 +34,20 @@ class Blocked(RuntimeError):
 
 class Engine:
     """ActionGate engine for rate limiting agent actions.
-    
+
     Example:
         engine = Engine()
-        
+
         # Simple decorator (raises on block in HARD mode)
         @engine.guard(Gate("api", "search"), Policy(max_calls=10, window=60))
         def search(query: str) -> list[str]:
             return db.search(query)
-        
+
         # Result-wrapped decorator (never raises, returns Result[T])
         @engine.guard_result(Gate("api", "fetch"), Policy(max_calls=5, mode=Mode.SOFT))
         def fetch(url: str) -> dict:
             return requests.get(url).json()
-        
+
         result = fetch("https://api.example.com")
         if result.ok:
             print(result.value)
@@ -54,15 +55,17 @@ class Engine:
             print(f"Blocked: {result.decision.message}")
     """
 
-    __slots__ = ("_store", "_clock", "_policies", "_emitter")
+    __slots__ = ("_store", "_async_store", "_clock", "_policies", "_emitter")
 
     def __init__(
         self,
         store: Store | None = None,
         clock: Callable[[], float] | None = None,
         emitter: Emitter | None = None,
+        async_store: AsyncStore | None = None,
     ) -> None:
         self._store = store or MemoryStore()
+        self._async_store = async_store or AsyncMemoryStore()
         self._clock = clock or time.monotonic
         self._policies: dict[Gate, Policy] = {}
         self._emitter = emitter or Emitter()
@@ -162,15 +165,15 @@ class Engine:
         policy: Policy | None = None,
     ) -> Callable[[Callable[P, T]], Callable[P, T]]:
         """Decorator that returns T directly.
-        
+
         - HARD mode (default): raises Blocked on limit
         - SOFT mode: raises Blocked on limit (use guard_result for no-raise)
-        
+
         Example:
             @engine.guard(Gate("api", "search"), Policy(max_calls=5))
             def search(query: str) -> list[str]:
                 return db.search(query)
-            
+
             results = search("hello")  # Returns list[str] or raises Blocked
         """
         if policy is not None:
@@ -192,14 +195,14 @@ class Engine:
         policy: Policy | None = None,
     ) -> Callable[[Callable[P, T]], Callable[P, Result[T]]]:
         """Decorator that returns Result[T] (never raises).
-        
+
         Use this when you want to handle blocks gracefully without exceptions.
-        
+
         Example:
             @engine.guard_result(Gate("api", "fetch"), Policy(max_calls=5, mode=Mode.SOFT))
             def fetch(url: str) -> dict:
                 return requests.get(url).json()
-            
+
             result = fetch("https://api.example.com")
             data = result.unwrap_or({"error": "rate limited"})
         """
@@ -217,6 +220,113 @@ class Engine:
                 value = fn(*args, **kwargs)
                 return Result(decision=decision, _value=value)
 
+            return wrapper
+        return decorator
+
+    # ─────────────────────────────────────────────────────────────
+    # Async API
+    # ─────────────────────────────────────────────────────────────
+
+    async def async_check(self, gate: Gate, policy: Policy | None = None) -> Decision:
+        """Async version of check(). Uses async_store backend."""
+        now = self._clock()
+        policy = policy or self.policy_for(gate)
+
+        try:
+            count, allowed, last_age = await self._async_store.check_and_reserve(
+                gate, now, policy
+            )
+        except Exception as e:
+            if policy.on_store_error == StoreErrorMode.FAIL_OPEN:
+                return self._decide(
+                    gate, policy,
+                    status=Status.ALLOW,
+                    reason=BlockReason.STORE_ERROR,
+                    message=f"Store error (fail-open): {e}",
+                )
+            else:
+                return self._decide(
+                    gate, policy,
+                    status=Status.BLOCK,
+                    reason=BlockReason.STORE_ERROR,
+                    message=f"Store error (fail-closed): {e}",
+                )
+
+        if allowed:
+            return self._decide(
+                gate, policy,
+                status=Status.ALLOW,
+                calls_in_window=count,
+                time_since_last=last_age,
+            )
+
+        if policy.cooldown > 0 and last_age is not None and last_age < policy.cooldown:
+            reason = BlockReason.COOLDOWN
+            msg = f"Cooldown: {last_age:.1f}s < {policy.cooldown}s"
+        else:
+            reason = BlockReason.RATE_LIMIT
+            msg = f"Rate limit: {count} >= {policy.max_calls}"
+
+        return self._decide(
+            gate, policy,
+            status=Status.BLOCK,
+            reason=reason,
+            message=msg,
+            calls_in_window=count,
+            time_since_last=last_age,
+        )
+
+    async def async_enforce(self, decision: Decision) -> None:
+        """Async version of enforce(). Raises Blocked in HARD mode."""
+        if decision.blocked and decision.policy.mode == Mode.HARD:
+            raise Blocked(decision)
+
+    def async_guard(
+        self,
+        gate: Gate,
+        policy: Policy | None = None,
+    ) -> Callable[
+        [Callable[P, Coroutine[object, object, T]]],
+        Callable[P, Coroutine[object, object, T]],
+    ]:
+        """Async decorator that returns T directly. Raises Blocked on limit."""
+        if policy is not None:
+            self.register(gate, policy)
+
+        def decorator(
+            fn: Callable[P, Coroutine[object, object, T]],
+        ) -> Callable[P, Coroutine[object, object, T]]:
+            @wraps(fn)
+            async def wrapper(*args: P.args, **kwargs: P.kwargs) -> T:
+                decision = await self.async_check(gate)
+                if decision.blocked:
+                    raise Blocked(decision)
+                return await fn(*args, **kwargs)
+            return wrapper
+        return decorator
+
+    def async_guard_result(
+        self,
+        gate: Gate,
+        policy: Policy | None = None,
+    ) -> Callable[
+        [Callable[P, Coroutine[object, object, T]]],
+        Callable[P, Coroutine[object, object, Result[T]]],
+    ]:
+        """Async decorator that returns Result[T] (never raises)."""
+        if policy is not None:
+            self.register(gate, policy)
+
+        def decorator(
+            fn: Callable[P, Coroutine[object, object, T]],
+        ) -> Callable[P, Coroutine[object, object, Result[T]]]:
+            @wraps(fn)
+            async def wrapper(*args: P.args, **kwargs: P.kwargs) -> Result[T]:
+                decision = await self.async_check(gate)
+                if decision.blocked:
+                    return Result(decision=decision)
+                value = await fn(*args, **kwargs)
+                return Result(decision=decision, _value=value)
             return wrapper
         return decorator
 

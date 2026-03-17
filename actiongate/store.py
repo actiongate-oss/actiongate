@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import secrets
 import threading
 from typing import TYPE_CHECKING, Protocol
@@ -9,12 +10,12 @@ from typing import TYPE_CHECKING, Protocol
 from .core import Gate, Policy
 
 if TYPE_CHECKING:
-    from redis import Redis
+    from redis import Redis  # type: ignore[import-not-found]
 
 
 class Store(Protocol):
     """Storage backend protocol.
-    
+
     Implementations must provide atomic check-and-reserve semantics
     for correct behavior under concurrency.
     """
@@ -23,7 +24,7 @@ class Store(Protocol):
         self, gate: Gate, now: float, policy: Policy
     ) -> tuple[int, bool, float | None]:
         """Atomically evaluate and (if allowed) reserve a slot.
-        
+
         Returns:
             (count_in_window, allowed, seconds_since_last)
         """
@@ -38,9 +39,31 @@ class Store(Protocol):
         ...
 
 
+class AsyncStore(Protocol):
+    """Async storage backend protocol.
+
+    Mirror of Store for async engines. Implementations must provide
+    atomic check-and-reserve semantics.
+    """
+
+    async def check_and_reserve(
+        self, gate: Gate, now: float, policy: Policy
+    ) -> tuple[int, bool, float | None]:
+        """Atomically evaluate and (if allowed) reserve a slot."""
+        ...
+
+    async def clear(self, gate: Gate) -> None:
+        """Clear history for a specific gate."""
+        ...
+
+    async def clear_all(self) -> None:
+        """Clear all history."""
+        ...
+
+
 class MemoryStore:
     """Thread-safe in-memory store with per-gate locking.
-    
+
     Suitable for single-process deployments. For distributed systems,
     use RedisStore instead.
     """
@@ -93,6 +116,66 @@ class MemoryStore:
 
     def clear_all(self) -> None:
         with self._global_lock:
+            self._events.clear()
+            self._locks.clear()
+
+
+class AsyncMemoryStore:
+    """Async in-memory store with per-gate locking.
+
+    Uses asyncio.Lock for coroutine-safe access. Suitable for
+    single-process async deployments.
+    """
+
+    __slots__ = ("_events", "_locks", "_global_lock")
+
+    def __init__(self) -> None:
+        self._events: dict[Gate, list[float]] = {}
+        self._locks: dict[Gate, asyncio.Lock] = {}
+        self._global_lock = asyncio.Lock()
+
+    async def _get_lock(self, gate: Gate) -> asyncio.Lock:
+        async with self._global_lock:
+            if gate not in self._locks:
+                self._locks[gate] = asyncio.Lock()
+            return self._locks[gate]
+
+    def _prune(
+        self, events: list[float], now: float, window: float | None
+    ) -> list[float]:
+        if window is None:
+            return sorted(events)
+        cutoff = now - window
+        return sorted(t for t in events if t >= cutoff)
+
+    async def check_and_reserve(
+        self, gate: Gate, now: float, policy: Policy
+    ) -> tuple[int, bool, float | None]:
+        lock = await self._get_lock(gate)
+        async with lock:
+            events = self._events.get(gate, [])
+            pruned = self._prune(events, now, policy.window)
+            last_age = (now - pruned[-1]) if pruned else None
+
+            if policy.cooldown > 0 and last_age is not None and last_age < policy.cooldown:
+                self._events[gate] = pruned
+                return len(pruned), False, last_age
+
+            if len(pruned) >= policy.max_calls:
+                self._events[gate] = pruned
+                return len(pruned), False, last_age
+
+            pruned.append(now)
+            self._events[gate] = pruned
+            return len(pruned), True, last_age
+
+    async def clear(self, gate: Gate) -> None:
+        lock = await self._get_lock(gate)
+        async with lock:
+            self._events.pop(gate, None)
+
+    async def clear_all(self) -> None:
+        async with self._global_lock:
             self._events.clear()
             self._locks.clear()
 
@@ -165,16 +248,16 @@ return {count + 1, 1, last_age and tostring(last_age) or "nil"}
 
 class RedisStore:
     """Redis-backed store using ZSET + Lua for atomic operations.
-    
+
     Suitable for distributed deployments. Requires redis-py client.
-    
+
     Example:
         import redis
         from actiongate import Engine, RedisStore
-        
+
         client = redis.Redis(host='localhost', port=6379, decode_responses=True)
         engine = Engine(store=RedisStore(client))
-    
+
     Implementation notes:
         - Uses ZSET with score=timestamp for range queries
         - Member format: "{timestamp}:{nonce}" prevents collision under concurrency
@@ -184,7 +267,7 @@ class RedisStore:
 
     __slots__ = ("_client", "_script", "_prefix")
 
-    def __init__(self, client: "Redis", prefix: str = "actiongate") -> None:
+    def __init__(self, client: Redis, prefix: str = "actiongate") -> None:
         """
         Args:
             client: Redis client instance (redis-py)
@@ -201,13 +284,13 @@ class RedisStore:
         self, gate: Gate, now: float, policy: Policy
     ) -> tuple[int, bool, float | None]:
         key = self._key(gate)
-        
+
         # Generate unique member: timestamp + random nonce
         nonce = secrets.token_hex(4)
         member = f"{now}:{nonce}"
-        
+
         window_arg = str(policy.window) if policy.window is not None else "none"
-        
+
         result = self._script(
             keys=[key],
             args=[
@@ -218,12 +301,12 @@ class RedisStore:
                 member,
             ]
         )
-        
+
         count = int(result[0])
         allowed = bool(int(result[1]))
         last_age_str = result[2]
         last_age = float(last_age_str) if last_age_str != "nil" else None
-        
+
         return count, allowed, last_age
 
     def clear(self, gate: Gate) -> None:
@@ -231,7 +314,7 @@ class RedisStore:
 
     def clear_all(self) -> None:
         """Clear all actiongate keys.
-        
+
         Warning: Uses SCAN, may be slow on large keyspaces.
         """
         pattern = f"{self._prefix}:*"

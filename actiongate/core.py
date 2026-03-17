@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import Optional
 
 
 class Mode(Enum):
@@ -35,10 +34,10 @@ class BlockReason(Enum):
 @dataclass(frozen=True, slots=True)
 class Gate:
     """Identifies a rate-limited action stream.
-    
+
     Examples:
         Gate("billing", "refund", "user:123")     # per-user
-        Gate("support", "escalate", "agent:42")   # per-agent  
+        Gate("support", "escalate", "agent:42")   # per-agent
         Gate("api", "search", "global")           # global limit
         Gate("chat", "send", "session:abc")       # per-session
     """
@@ -48,7 +47,7 @@ class Gate:
 
     def __str__(self) -> str:
         return f"{self.namespace}:{self.action}@{self.principal}"
-    
+
     @property
     def key(self) -> str:
         """Redis-friendly key string."""
@@ -58,7 +57,7 @@ class Gate:
 @dataclass(frozen=True, slots=True)
 class Policy:
     """Rate limiting policy.
-    
+
     Args:
         max_calls: Maximum calls allowed in window (0 = always block)
         window: Rolling window in seconds (None = infinite)
@@ -104,7 +103,7 @@ class Decision:
         """Truthy = allowed."""
         return self.allowed
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, object]:
         """Serialize for audit composition."""
         return {
             "schema_version": "0.2.2",

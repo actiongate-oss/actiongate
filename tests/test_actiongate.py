@@ -1,21 +1,22 @@
 """Tests for ActionGate."""
 
 import pytest
+
 from actiongate import (
     MISSING,
+    AsyncMemoryStore,
+    Blocked,
+    BlockReason,
+    Decision,
     Engine,
     Gate,
-    Policy,
     Mode,
-    Blocked,
-    Decision,
+    Policy,
     Result,
     Status,
-    BlockReason,
     StoreErrorMode,
 )
 from actiongate.core import _Missing
-
 
 # ═══════════════════════════════════════════════════════════════
 # Core types
@@ -565,6 +566,260 @@ class TestClear:
         assert engine.check(gate2, policy).allowed
 
 
+# ═══════════════════════════════════════════════════════════════
+# Async: check / enforce
+# ═══════════════════════════════════════════════════════════════
+
+
+class TestAsyncCheck:
+    """async_check mirrors sync check behavior."""
+
+    @pytest.mark.asyncio
+    async def test_allows_up_to_max_calls(self):
+        engine = Engine(async_store=AsyncMemoryStore())
+        gate = Gate("test", "action")
+        policy = Policy(max_calls=3, window=60)
+
+        for _ in range(3):
+            d = await engine.async_check(gate, policy)
+            assert d.allowed
+
+    @pytest.mark.asyncio
+    async def test_blocks_after_max_calls(self):
+        engine = Engine(async_store=AsyncMemoryStore())
+        gate = Gate("test", "action")
+        policy = Policy(max_calls=2, window=60)
+
+        await engine.async_check(gate, policy)
+        await engine.async_check(gate, policy)
+        decision = await engine.async_check(gate, policy)
+
+        assert decision.blocked
+        assert decision.reason == BlockReason.RATE_LIMIT
+
+    @pytest.mark.asyncio
+    async def test_cooldown_blocks_rapid_calls(self):
+        clock = MockClock(1000)
+        engine = Engine(clock=clock, async_store=AsyncMemoryStore())
+        gate = Gate("test", "action")
+        policy = Policy(max_calls=100, cooldown=10)
+
+        d = await engine.async_check(gate, policy)
+        assert d.allowed
+
+        clock.advance(5)
+        decision = await engine.async_check(gate, policy)
+        assert decision.blocked
+        assert decision.reason == BlockReason.COOLDOWN
+
+    @pytest.mark.asyncio
+    async def test_window_expiry_resets_count(self):
+        clock = MockClock(1000)
+        engine = Engine(clock=clock, async_store=AsyncMemoryStore())
+        gate = Gate("test", "action")
+        policy = Policy(max_calls=2, window=60)
+
+        await engine.async_check(gate, policy)
+        await engine.async_check(gate, policy)
+
+        clock.advance(70)
+        d = await engine.async_check(gate, policy)
+        assert d.allowed
+
+    @pytest.mark.asyncio
+    async def test_different_principals_independent(self):
+        engine = Engine(async_store=AsyncMemoryStore())
+        policy = Policy(max_calls=1)
+
+        gate_a = Gate("ns", "action", "user:A")
+        gate_b = Gate("ns", "action", "user:B")
+
+        await engine.async_check(gate_a, policy)
+        await engine.async_check(gate_b, policy)
+
+        assert (await engine.async_check(gate_a, policy)).blocked
+        assert (await engine.async_check(gate_b, policy)).blocked
+
+
+class TestAsyncEnforce:
+    """async_enforce mirrors sync enforce behavior."""
+
+    @pytest.mark.asyncio
+    async def test_hard_mode_raises(self):
+        engine = Engine(async_store=AsyncMemoryStore())
+        gate = Gate("test", "action")
+        policy = Policy(max_calls=1, mode=Mode.HARD)
+
+        await engine.async_check(gate, policy)
+        decision = await engine.async_check(gate, policy)
+
+        with pytest.raises(Blocked) as exc:
+            await engine.async_enforce(decision)
+        assert exc.value.decision.reason == BlockReason.RATE_LIMIT
+
+    @pytest.mark.asyncio
+    async def test_soft_mode_no_exception(self):
+        engine = Engine(async_store=AsyncMemoryStore())
+        gate = Gate("test", "action")
+        policy = Policy(max_calls=1, mode=Mode.SOFT)
+
+        await engine.async_check(gate, policy)
+        decision = await engine.async_check(gate, policy)
+
+        await engine.async_enforce(decision)  # Should not raise
+        assert decision.blocked
+
+
+# ═══════════════════════════════════════════════════════════════
+# Async: guard / guard_result decorators
+# ═══════════════════════════════════════════════════════════════
+
+
+class TestAsyncGuard:
+    """@engine.async_guard decorator."""
+
+    @pytest.mark.asyncio
+    async def test_returns_value_directly(self):
+        engine = Engine(async_store=AsyncMemoryStore())
+        gate = Gate("test", "greet")
+
+        @engine.async_guard(gate, Policy(max_calls=2))
+        async def greet(name: str) -> str:
+            return f"Hello, {name}!"
+
+        result = await greet("World")
+        assert result == "Hello, World!"
+
+    @pytest.mark.asyncio
+    async def test_raises_on_block(self):
+        engine = Engine(async_store=AsyncMemoryStore())
+        gate = Gate("test", "limited")
+
+        @engine.async_guard(gate, Policy(max_calls=1, mode=Mode.HARD))
+        async def limited() -> str:
+            return "success"
+
+        assert await limited() == "success"
+        with pytest.raises(Blocked):
+            await limited()
+
+    @pytest.mark.asyncio
+    async def test_preserves_function_metadata(self):
+        engine = Engine(async_store=AsyncMemoryStore())
+
+        @engine.async_guard(Gate("test", "action"), Policy())
+        async def my_func():
+            """My docstring."""
+
+        assert my_func.__name__ == "my_func"
+        assert my_func.__doc__ == "My docstring."
+
+
+class TestAsyncGuardResult:
+    """@engine.async_guard_result decorator."""
+
+    @pytest.mark.asyncio
+    async def test_returns_result_wrapper(self):
+        engine = Engine(async_store=AsyncMemoryStore())
+        gate = Gate("test", "greet")
+
+        @engine.async_guard_result(gate, Policy(max_calls=2))
+        async def greet(name: str) -> str:
+            return f"Hello, {name}!"
+
+        result = await greet("World")
+        assert result.ok
+        assert result.value == "Hello, World!"
+
+    @pytest.mark.asyncio
+    async def test_blocked_returns_missing(self):
+        engine = Engine(async_store=AsyncMemoryStore())
+        gate = Gate("test", "limited")
+
+        @engine.async_guard_result(gate, Policy(max_calls=1, mode=Mode.SOFT))
+        async def limited() -> str:
+            return "success"
+
+        assert (await limited()).value == "success"
+        result = await limited()
+
+        assert not result.ok
+        assert not result.has_value
+        assert result.value is None
+
+    @pytest.mark.asyncio
+    async def test_none_return_not_confused_with_blocked(self):
+        engine = Engine(async_store=AsyncMemoryStore())
+
+        @engine.async_guard_result(Gate("test", "void"), Policy(max_calls=10))
+        async def void_op() -> None:
+            return None
+
+        result = await void_op()
+        assert result.ok is True
+        assert result.has_value is True
+        assert result.value is None
+        assert result.unwrap() is None
+
+    @pytest.mark.asyncio
+    async def test_unwrap_or_default(self):
+        engine = Engine(async_store=AsyncMemoryStore())
+
+        @engine.async_guard_result(
+            Gate("test", "action"), Policy(max_calls=1, mode=Mode.SOFT)
+        )
+        async def action() -> int:
+            return 42
+
+        await action()
+        assert (await action()).unwrap_or(0) == 0
+
+
+class TestAsyncStoreErrorModes:
+    """Async store failure handling."""
+
+    @pytest.mark.asyncio
+    async def test_fail_closed_blocks_on_error(self):
+        engine = Engine(async_store=AsyncFailingStore())
+        gate = Gate("test", "action")
+        policy = Policy(max_calls=10, on_store_error=StoreErrorMode.FAIL_CLOSED)
+
+        decision = await engine.async_check(gate, policy)
+
+        assert decision.blocked
+        assert decision.reason == BlockReason.STORE_ERROR
+        assert "fail-closed" in decision.message
+
+    @pytest.mark.asyncio
+    async def test_fail_open_allows_on_error(self):
+        engine = Engine(async_store=AsyncFailingStore())
+        gate = Gate("test", "action")
+        policy = Policy(max_calls=10, on_store_error=StoreErrorMode.FAIL_OPEN)
+
+        decision = await engine.async_check(gate, policy)
+
+        assert decision.allowed
+        assert decision.reason == BlockReason.STORE_ERROR
+        assert "fail-open" in decision.message
+
+
+class TestAsyncListeners:
+    """Async decisions still emit to listeners."""
+
+    @pytest.mark.asyncio
+    async def test_listener_receives_async_decisions(self):
+        decisions = []
+        engine = Engine(async_store=AsyncMemoryStore())
+        engine.on_decision(decisions.append)
+
+        gate = Gate("test", "action")
+        await engine.async_check(gate, Policy(max_calls=2))
+        await engine.async_check(gate, Policy(max_calls=2))
+
+        assert len(decisions) == 2
+        assert all(d.status == Status.ALLOW for d in decisions)
+
+
 # ─────────────────────────────────────────────────────────────────
 # Test Utilities
 # ─────────────────────────────────────────────────────────────────
@@ -592,6 +847,19 @@ class FailingStore:
         raise ConnectionError("Redis connection failed")
 
     def clear_all(self):
+        raise ConnectionError("Redis connection failed")
+
+
+class AsyncFailingStore:
+    """Async store that always raises (for testing error handling)."""
+
+    async def check_and_reserve(self, gate, now, policy):
+        raise ConnectionError("Redis connection failed")
+
+    async def clear(self, gate):
+        raise ConnectionError("Redis connection failed")
+
+    async def clear_all(self):
         raise ConnectionError("Redis connection failed")
 
 
